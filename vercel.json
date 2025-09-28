@@ -1,17 +1,19 @@
 {
-  "functions": {
-    "api/*.py": {
-      "runtime": "@vercel/python"
-    }
-  },
-  "routes": [
+  "version": 2,
+  "builds": [
     {
-      "src": "/api/garmin/(.*)",
-      "dest": "/api/garmin.py"
-    },
+      "src": "api/*.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
     {
       "src": "/api/test",
       "dest": "/api/test.py"
+    },
+    {
+      "src": "/api/garmin/(.*)",
+      "dest": "/api/garmin.py"
     }
   ]
 }
