@@ -1,82 +1,89 @@
-from http.server import BaseHTTPRequestHandler
+from flask import Flask, jsonify
 import json
 import os
 from datetime import date
-from urllib.parse import urlparse
 
-class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        # Variables d'environnement
-        GARMIN_EMAIL = os.getenv('GARMIN_EMAIL')
-        GARMIN_PASSWORD = os.getenv('GARMIN_PASSWORD')
+# Configuration Flask pour Vercel
+app = Flask(__name__)
+
+def handler(request):
+    """Handler principal pour Vercel Serverless Functions"""
+    
+    # Variables d'environnement
+    GARMIN_EMAIL = os.getenv('GARMIN_EMAIL')
+    GARMIN_PASSWORD = os.getenv('GARMIN_PASSWORD')
+    
+    if not GARMIN_EMAIL or not GARMIN_PASSWORD:
+        return {
+            'statusCode': 400,
+            'body': json.dumps({'error': 'Missing Garmin credentials'})
+        }
+    
+    # Parse l'URL pour récupérer la date
+    path = request.get('path', '')
+    
+    if '/api/garmin/' in path:
+        date_str = path.split('/api/garmin/')[-1]
+    else:
+        date_str = date.today().strftime('%Y-%m-%d')
+    
+    try:
+        # Import garminconnect
+        from garminconnect import Garmin
         
-        # Parse l'URL
-        path = self.path
+        # Connexion
+        api = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+        api.login()
         
-        try:
-            # Extract date from path /api/garmin/2024-09-28
-            if '/api/garmin/' in path:
-                date_str = path.split('/api/garmin/')[-1]
-            else:
-                date_str = date.today().strftime('%Y-%m-%d')
+        # Récupération des données
+        garmin_data = {
+            'date': date_str,
+            'status': 'success',
+            'timestamp': date.today().isoformat(),
             
-            # Import et connexion Garmin
-            from garminconnect import Garmin
-            
-            api = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-            api.login()
-            
-            # Récupération des données
-            all_data = {
+            # DONNÉES ESSENTIELLES
+            'sleep_data': safe_api_call(lambda: api.get_sleep_data(date_str)),
+            'stress_data': safe_api_call(lambda: api.get_stress_data(date_str)),
+            'body_battery': safe_api_call(lambda: api.get_body_battery(date_str, date_str)),
+            'heart_rate': safe_api_call(lambda: api.get_heart_rates(date_str)),
+            'resting_hr': safe_api_call(lambda: api.get_rhr_day(date_str)),
+            'steps_data': safe_api_call(lambda: api.get_steps_data(date_str)),
+            'stats_data': safe_api_call(lambda: api.get_stats(date_str)),
+            'respiration': safe_api_call(lambda: api.get_respiration_data(date_str)),
+            'hydration': safe_api_call(lambda: api.get_hydration_data(date_str)),
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps(garmin_data)
+        }
+        
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps({
                 'date': date_str,
-                'status': 'success',
-                
-                # SOMMEIL
-                'sleep_data': safe_api_call(lambda: api.get_sleep_data(date_str)),
-                
-                # STRESS & RÉCUPÉRATION  
-                'stress_data': safe_api_call(lambda: api.get_stress_data(date_str)),
-                'body_battery': safe_api_call(lambda: api.get_body_battery(date_str, date_str)),
-                
-                # FRÉQUENCE CARDIAQUE
-                'heart_rate': safe_api_call(lambda: api.get_heart_rates(date_str)),
-                'resting_hr': safe_api_call(lambda: api.get_rhr_day(date_str)),
-                
-                # ACTIVITÉ
-                'steps_data': safe_api_call(lambda: api.get_steps_data(date_str)),
-                'stats_data': safe_api_call(lambda: api.get_stats(date_str)),
-                
-                # AUTRES
-                'respiration': safe_api_call(lambda: api.get_respiration_data(date_str)),
-                'hydration': safe_api_call(lambda: api.get_hydration_data(date_str)),
-            }
-            
-            # Réponse JSON
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            
-            response = json.dumps(all_data)
-            self.wfile.write(response.encode())
-            
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            
-            error_response = {
-                'date': date_str if 'date_str' in locals() else 'unknown',
                 'status': 'error',
                 'error': str(e)
-            }
-            
-            response = json.dumps(error_response)
-            self.wfile.write(response.encode())
+            })
+        }
 
 def safe_api_call(func):
-    """Wrapper pour éviter les erreurs"""
+    """Wrapper sécurisé pour les appels API"""
     try:
-        return func()
-    except:
+        result = func()
+        return result
+    except Exception:
         return None
+
+# Pour les tests locaux
+if __name__ == '__main__':
+    # Test local
+    test_request = {'path': '/api/garmin/2024-09-28'}
+    result = handler(test_request)
+    print(json.dumps(result, indent=2))
