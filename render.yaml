@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: garmin-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: GARMIN_OAUTH1_TOKEN
+        sync: false
+      - key: GARMIN_OAUTH2_TOKEN
+        sync: false
