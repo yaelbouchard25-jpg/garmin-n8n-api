@@ -75,42 +75,128 @@ class handler(BaseHTTPRequestHandler):
             api.garth.oauth1_token = oauth1_token
             api.garth.oauth2_token = oauth2_token
             
-            # Récupérer TOUTES les données
+            # Récupérer les données avec gestion intelligente
             data = {
                 'date': date_str,
                 'status': 'success',
                 'current_date': date.today().isoformat(),
-                
-                # Stats générales
-                'user_summary': self.safe_call(lambda: api.get_user_summary(date_str)),
-                'stats': self.safe_call(lambda: api.get_stats(date_str)),
-                
-                # Activité
-                'steps': self.safe_call(lambda: api.get_steps_data(date_str)),
-                'floors': self.safe_call(lambda: api.get_floors(date_str)),
-                
-                # Coeur
-                'heart_rate': self.safe_call(lambda: api.get_heart_rates(date_str)),
-                'resting_hr': self.safe_call(lambda: api.get_rhr_day(date_str)),
-                'hrv': self.safe_call(lambda: api.get_hrv_data(date_str)),
-                
-                # Sommeil
-                'sleep': self.safe_call(lambda: api.get_sleep_data(date_str)),
-                
-                # Stress & Récupération
-                'stress': self.safe_call(lambda: api.get_stress_data(date_str)),
-                'body_battery': self.safe_call(lambda: api.get_body_battery(date_str, date_str)),
-                'training_status': self.safe_call(lambda: api.get_training_status(date_str)),
-                
-                # Respiration & Hydratation
-                'respiration': self.safe_call(lambda: api.get_respiration_data(date_str)),
-                'hydration': self.safe_call(lambda: api.get_hydration_data(date_str)),
-                'spo2': self.safe_call(lambda: api.get_spo2_data(date_str)),
             }
+            
+            # USER SUMMARY - peut être liste ou dict
+            try:
+                user_summary = api.get_user_summary(date_str)
+                if isinstance(user_summary, list) and len(user_summary) > 0:
+                    data['user_summary'] = user_summary[0]  # Prendre le 1er élément
+                elif isinstance(user_summary, dict):
+                    data['user_summary'] = user_summary
+                else:
+                    data['user_summary'] = None
+            except Exception as e:
+                data['user_summary'] = {'error': str(e)}
+            
+            # STATS - peut être liste ou dict
+            try:
+                stats = api.get_stats(date_str)
+                if isinstance(stats, list) and len(stats) > 0:
+                    data['stats'] = stats[0]  # Prendre le 1er élément
+                elif isinstance(stats, dict):
+                    data['stats'] = stats
+                else:
+                    data['stats'] = None
+            except Exception as e:
+                data['stats'] = {'error': str(e)}
+            
+            # STEPS
+            try:
+                steps_data = api.get_steps_data(date_str)
+                if isinstance(steps_data, list) and len(steps_data) > 0:
+                    data['steps'] = steps_data[0]
+                elif isinstance(steps_data, dict):
+                    # Extraire la valeur si c'est un dict avec une clé 'totalSteps' ou similaire
+                    data['steps'] = steps_data.get('totalSteps') or steps_data.get('steps') or steps_data
+                else:
+                    data['steps'] = steps_data
+            except Exception as e:
+                data['steps'] = None
+            
+            # HEART RATE
+            try:
+                hr_data = api.get_heart_rates(date_str)
+                if isinstance(hr_data, dict):
+                    data['heart_rate'] = {
+                        'resting': hr_data.get('restingHeartRate'),
+                        'max': hr_data.get('maxHeartRate'),
+                        'min': hr_data.get('minHeartRate')
+                    }
+                else:
+                    data['heart_rate'] = hr_data
+            except:
+                data['heart_rate'] = None
+            
+            # RESTING HR
+            try:
+                data['resting_hr'] = api.get_rhr_day(date_str)
+            except:
+                data['resting_hr'] = None
+            
+            # HRV
+            try:
+                data['hrv'] = api.get_hrv_data(date_str)
+            except:
+                data['hrv'] = None
+            
+            # SLEEP
+            try:
+                sleep_data = api.get_sleep_data(date_str)
+                if isinstance(sleep_data, dict) and 'dailySleepDTO' in sleep_data:
+                    sleep_dto = sleep_data['dailySleepDTO']
+                    data['sleep'] = {
+                        'score': sleep_dto.get('sleepScores', {}).get('overall', {}).get('value'),
+                        'duration_hours': sleep_dto.get('sleepTimeSeconds', 0) / 3600,
+                        'deep_sleep_seconds': sleep_dto.get('deepSleepSeconds'),
+                        'light_sleep_seconds': sleep_dto.get('lightSleepSeconds'),
+                        'rem_sleep_seconds': sleep_dto.get('remSleepSeconds'),
+                        'awake_seconds': sleep_dto.get('awakeSleepSeconds')
+                    }
+                else:
+                    data['sleep'] = sleep_data
+            except:
+                data['sleep'] = None
+            
+            # STRESS
+            try:
+                stress_data = api.get_stress_data(date_str)
+                if isinstance(stress_data, dict):
+                    data['stress'] = {
+                        'avg': stress_data.get('avgStressLevel'),
+                        'max': stress_data.get('maxStressLevel'),
+                        'rest_time': stress_data.get('restStressLevel')
+                    }
+                else:
+                    data['stress'] = stress_data
+            except:
+                data['stress'] = None
+            
+            # BODY BATTERY
+            try:
+                bb_data = api.get_body_battery(date_str, date_str)
+                if isinstance(bb_data, list) and len(bb_data) > 0:
+                    data['body_battery'] = bb_data[0]
+                else:
+                    data['body_battery'] = bb_data
+            except:
+                data['body_battery'] = None
+            
+            # AUTRES DONNÉES
+            data['floors'] = self.safe_call(lambda: api.get_floors(date_str))
+            data['training_status'] = self.safe_call(lambda: api.get_training_status(date_str))
+            data['respiration'] = self.safe_call(lambda: api.get_respiration_data(date_str))
+            data['hydration'] = self.safe_call(lambda: api.get_hydration_data(date_str))
+            data['spo2'] = self.safe_call(lambda: api.get_spo2_data(date_str))
             
             # Vérifier si on a des données
             has_data = any(
-                v and v != [] and 'error' not in str(v)
+                v and v != [] and v != {} and 'error' not in str(v)
                 for k, v in data.items() 
                 if k not in ['date', 'status', 'current_date']
             )
@@ -133,9 +219,12 @@ class handler(BaseHTTPRequestHandler):
             result = func()
             if result is None or result == [] or result == {}:
                 return None
+            # Si c'est une liste, prendre le 1er élément
+            if isinstance(result, list) and len(result) > 0:
+                return result[0]
             return result
         except Exception as e:
-            return {'error': str(e), 'type': type(e).__name__}
+            return None
     
     def send_json(self, code, data):
         self.send_response(code)
