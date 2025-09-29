@@ -2,31 +2,24 @@ from http.server import BaseHTTPRequestHandler
 import json
 import os
 from datetime import date
-import traceback
-import time
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        """Handler principal"""
-        
         try:
             # Route test
             if 'test' in self.path or (self.path == '/api/index' and 'garmin' not in self.path):
                 self.send_json(200, {
-                    'status': 'Garmin API working on Vercel',
-                    'message': 'Ready to fetch Garmin data',
-                    'version': '2.0-auth-fixed',
+                    'status': '✅ Garmin API - OAuth Tokens (2FA Compatible)',
+                    'version': 'FINAL',
+                    'tokens_configured': {
+                        'oauth1': bool(os.getenv('GARMIN_OAUTH1_TOKEN')),
+                        'oauth2': bool(os.getenv('GARMIN_OAUTH2_TOKEN'))
+                    },
                     'endpoints': {
                         'test': '/api/index',
-                        'garmin': '/api/index?garmin&date=YYYY-MM-DD',
-                        'test_credentials': '/api/index?test_auth'
+                        'garmin': '/api/index?garmin&date=2024-09-28'
                     }
                 })
-                return
-            
-            # Route test auth
-            elif 'test_auth' in self.path:
-                self.test_credentials()
                 return
             
             # Route Garmin
@@ -38,66 +31,14 @@ class handler(BaseHTTPRequestHandler):
                 self.send_json(404, {'error': 'Route not found'})
                 
         except Exception as e:
-            self.send_json(500, {'error': str(e), 'traceback': traceback.format_exc()})
-    
-    def test_credentials(self):
-        """Test uniquement les credentials"""
-        
-        GARMIN_EMAIL = os.getenv('GARMIN_EMAIL')
-        GARMIN_PASSWORD = os.getenv('GARMIN_PASSWORD')
-        
-        result = {
-            'email_configured': bool(GARMIN_EMAIL),
-            'password_configured': bool(GARMIN_PASSWORD),
-            'email_length': len(GARMIN_EMAIL) if GARMIN_EMAIL else 0,
-            'password_length': len(GARMIN_PASSWORD) if GARMIN_PASSWORD else 0,
-            'email_preview': GARMIN_EMAIL[:3] + '***' + GARMIN_EMAIL[-3:] if GARMIN_EMAIL else None,
-        }
-        
-        if not GARMIN_EMAIL or not GARMIN_PASSWORD:
-            result['status'] = 'credentials_missing'
-            self.send_json(400, result)
-            return
-        
-        try:
-            from garminconnect import Garmin
-            result['import_success'] = True
-            
-            # Tentative de connexion
-            api = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-            result['garmin_object_created'] = True
-            
-            # Login avec gestion d'erreur détaillée
-            try:
-                api.login()
-                result['login_success'] = True
-                result['display_name'] = api.display_name
-                result['status'] = 'credentials_valid'
-                
-            except AssertionError as e:
-                result['login_success'] = False
-                result['error_type'] = 'AssertionError'
-                result['status'] = 'credentials_invalid_or_2fa_enabled'
-                result['help'] = 'Check: 1) Email/password correct, 2) No 2FA enabled, 3) Account not locked'
-                
-            except Exception as e:
-                result['login_success'] = False
-                result['error'] = str(e)
-                result['error_type'] = type(e).__name__
-                result['status'] = 'login_failed'
-            
-            self.send_json(200, result)
-            
-        except Exception as e:
-            result['error'] = str(e)
-            result['traceback'] = traceback.format_exc()
-            self.send_json(500, result)
+            self.send_json(500, {'error': str(e)})
     
     def handle_garmin(self):
-        """Gère les requêtes Garmin"""
+        """Récupère les données Garmin avec OAuth tokens"""
         
-        GARMIN_EMAIL = os.getenv('GARMIN_EMAIL')
-        GARMIN_PASSWORD = os.getenv('GARMIN_PASSWORD')
+        # Récupérer les tokens depuis variables d'environnement
+        oauth1_str = os.getenv('GARMIN_OAUTH1_TOKEN')
+        oauth2_str = os.getenv('GARMIN_OAUTH2_TOKEN')
         
         # Parse date
         try:
@@ -107,71 +48,72 @@ class handler(BaseHTTPRequestHandler):
         except:
             date_str = date.today().strftime('%Y-%m-%d')
         
-        # Vérifier credentials
-        if not GARMIN_EMAIL or not GARMIN_PASSWORD:
+        # Vérifier que les tokens existent
+        if not oauth1_str or not oauth2_str:
             self.send_json(400, {
-                'error': 'Credentials not configured',
-                'help': 'Add GARMIN_EMAIL and GARMIN_PASSWORD in Vercel Environment Variables'
+                'error': 'OAuth tokens not configured',
+                'help': 'Add GARMIN_OAUTH1_TOKEN and GARMIN_OAUTH2_TOKEN in Vercel',
+                'oauth1_set': bool(oauth1_str),
+                'oauth2_set': bool(oauth2_str)
             })
             return
         
         try:
+            import garth
             from garminconnect import Garmin
             
-            # Connexion avec retry
-            max_retries = 3
-            api = None
+            # Parser les tokens JSON
+            oauth1_token = json.loads(oauth1_str)
+            oauth2_token = json.loads(oauth2_str)
             
-            for attempt in range(max_retries):
-                try:
-                    api = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-                    api.login()
-                    break  # Success
-                except AssertionError:
-                    if attempt < max_retries - 1:
-                        time.sleep(2)  # Wait before retry
-                        continue
-                    else:
-                        raise Exception("Login failed: Invalid credentials or 2FA enabled. Please check your Garmin email/password and disable 2FA.")
+            # Créer objets token pour garth
+            from garth.auth_tokens import OAuth1Token, OAuth2Token
             
-            if not api:
-                raise Exception("Could not create Garmin API connection")
+            garth.client.oauth1_token = OAuth1Token(**oauth1_token)
+            garth.client.oauth2_token = OAuth2Token(**oauth2_token)
             
-            # Récupération données
+            # Créer client Garmin (pas besoin de login!)
+            api = Garmin()
+            
+            # Récupérer TOUTES les données
             data = {
                 'date': date_str,
                 'status': 'success',
-                'display_name': getattr(api, 'display_name', None),
+                'auth_method': 'oauth_tokens',
                 
-                # DONNÉES
+                # DONNÉES COMPLÈTES
                 'sleep_data': self.safe(lambda: api.get_sleep_data(date_str)),
                 'stress_data': self.safe(lambda: api.get_stress_data(date_str)),
                 'body_battery': self.safe(lambda: api.get_body_battery(date_str, date_str)),
                 'heart_rate': self.safe(lambda: api.get_heart_rates(date_str)),
                 'resting_hr': self.safe(lambda: api.get_rhr_day(date_str)),
+                'hrv_data': self.safe(lambda: api.get_hrv_data(date_str)),
                 'steps_data': self.safe(lambda: api.get_steps_data(date_str)),
                 'stats_data': self.safe(lambda: api.get_stats(date_str)),
                 'respiration': self.safe(lambda: api.get_respiration_data(date_str)),
                 'hydration': self.safe(lambda: api.get_hydration_data(date_str)),
+                'training_status': self.safe(lambda: api.get_training_status(date_str)),
             }
             
             self.send_json(200, data)
             
         except Exception as e:
+            import traceback
             self.send_json(500, {
-                'error': str(e),
+                'error': f'Garmin API failed: {str(e)}',
                 'date': date_str,
-                'error_type': type(e).__name__,
-                'help': 'If AssertionError: check credentials and disable 2FA on Garmin account'
+                'traceback': traceback.format_exc()
             })
     
     def safe(self, func):
+        """Wrapper pour éviter les erreurs"""
         try:
             return func()
         except:
             return None
     
     def send_json(self, code, data):
+        """Envoie une réponse JSON"""
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
