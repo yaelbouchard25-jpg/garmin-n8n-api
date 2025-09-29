@@ -22,10 +22,9 @@ class handler(BaseHTTPRequestHandler):
             self.send_json(500, {'error': str(e), 'trace': traceback.format_exc()})
     
     def handle_garmin(self):
-        oauth1_str = os.getenv('GARMIN_OAUTH1_TOKEN')
-        oauth2_str = os.getenv('GARMIN_OAUTH2_TOKEN')
-        display_name = os.getenv('GARMIN_DISPLAY_NAME')
-        full_name = os.getenv('GARMIN_FULL_NAME')
+        # SIMPLE : EMAIL + PASSWORD (comme GitHub)
+        email = os.getenv('GARMIN_EMAIL')
+        password = os.getenv('GARMIN_PASSWORD')
         
         # Parse date
         try:
@@ -35,82 +34,36 @@ class handler(BaseHTTPRequestHandler):
         except:
             date_str = date.today().isoformat()
         
-        if not all([oauth1_str, oauth2_str, display_name]):
-            self.send_json(400, {'error': 'Missing credentials'})
+        if not email or not password:
+            self.send_json(400, {
+                'error': 'Missing GARMIN_EMAIL or GARMIN_PASSWORD',
+                'help': 'Add these env variables in Vercel'
+            })
             return
         
         try:
-            import garth
             from garminconnect import Garmin
-            from garth.auth_tokens import OAuth1Token, OAuth2Token
             
-            # Parser tokens
-            oauth1_data = json.loads(oauth1_str)
-            oauth2_data = json.loads(oauth2_str)
-            oauth1_token = OAuth1Token(**oauth1_data)
-            oauth2_token = OAuth2Token(**oauth2_data)
+            # SIMPLE LOGIN (comme tous les projets GitHub)
+            api = Garmin(email, password)
+            api.login()
             
-            # Créer client
-            api = Garmin()
-            api.garth.oauth1_token = oauth1_token
-            api.garth.oauth2_token = oauth2_token
-            api.display_name = display_name
-            api.full_name = full_name if full_name else "User"
-            
-            # MODE DEBUG : Afficher les données brutes
+            # Structure de base
             data = {
                 'date': date_str,
-                'status': 'debug_mode',
-                'profile': {
-                    'display_name': display_name,
-                    'full_name': full_name
-                },
-                'raw_data': {}
+                'status': 'success'
             }
             
-            # STEPS - DEBUG
-            try:
-                steps_raw = api.get_steps_data(date_str)
-                data['raw_data']['steps'] = {
-                    'type': str(type(steps_raw)),
-                    'length': len(steps_raw) if isinstance(steps_raw, (list, dict)) else 'N/A',
-                    'data': steps_raw
-                }
-            except Exception as e:
-                data['raw_data']['steps'] = {'error': str(e)}
-            
-            # HEART RATE - DEBUG
-            try:
-                hr_raw = api.get_heart_rates(date_str)
-                data['raw_data']['heart_rate'] = {
-                    'type': str(type(hr_raw)),
-                    'length': len(hr_raw) if isinstance(hr_raw, (list, dict)) else 'N/A',
-                    'data': hr_raw
-                }
-            except Exception as e:
-                data['raw_data']['heart_rate'] = {'error': str(e)}
-            
-            # SLEEP - DEBUG
-            try:
-                sleep_raw = api.get_sleep_data(date_str)
-                data['raw_data']['sleep'] = {
-                    'type': str(type(sleep_raw)),
-                    'keys': list(sleep_raw.keys()) if isinstance(sleep_raw, dict) else 'N/A',
-                    'data': sleep_raw
-                }
-            except Exception as e:
-                data['raw_data']['sleep'] = {'error': str(e)}
-            
-            # BODY BATTERY - DEBUG
-            try:
-                bb_raw = api.get_body_battery(date_str, date_str)
-                data['raw_data']['body_battery'] = {
-                    'type': str(type(bb_raw)),
-                    'length': len(bb_raw) if isinstance(bb_raw, (list, dict)) else 'N/A',
-                    'data': bb_raw
-                }
-            except Exception as e:
-                data['raw_data']['body_battery'] = {'error': str(e)}
+            # RÉCUPÉRER LES DONNÉES
+            data['steps'] = self.safe_get(lambda: api.get_steps_data(date_str))
+            data['heart_rate'] = self.safe_get(lambda: api.get_heart_rates(date_str))
+            data['sleep'] = self.safe_get(lambda: api.get_sleep_data(date_str))
+            data['stress'] = self.safe_get(lambda: api.get_stress_data(date_str))
+            data['body_battery'] = self.safe_get(lambda: api.get_body_battery(date_str, date_str))
+            data['hrv'] = self.safe_get(lambda: api.get_hrv_data(date_str))
+            data['respiration'] = self.safe_get(lambda: api.get_respiration_data(date_str))
+            data['hydration'] = self.safe_get(lambda: api.get_hydration_data(date_str))
+            data['spo2'] = self.safe_get(lambda: api.get_spo2_data(date_str))
             
             self.send_json(200, data)
             
@@ -122,9 +75,14 @@ class handler(BaseHTTPRequestHandler):
                 'trace': traceback.format_exc()
             })
     
+    def safe_get(self, func):
+        try:
+            result = func()
+            return result if result else None
+        except Exception as e:
+            return {'error': str(e)}
+    
     def send_json(self, code, data):
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps(data, indent=2, default=str).encode())
+        self.send_heade
